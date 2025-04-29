@@ -117,7 +117,7 @@ async def handle_dispatch(bot, d):
                 })
                 print(f"[7TV] ADD {emote_name} ({emote_id}) in {channel_name} by {actor}")
 
-    # Handle pulled emotes (removes)
+    # Handle pulled emotes (main way 7TV removes emotes)
     for emote in body.get("pulled", []):
         if emote.get("key") == "emotes":
             old = emote.get("old_value", {})
@@ -133,6 +133,39 @@ async def handle_dispatch(bot, d):
                     "color": discord.Color.red(),
                 })
                 print(f"[7TV] REMOVE {emote_name} ({emote_id}) in {channel_name} by {actor}")
+
+    # Handle updated emotes with value None (sometimes used for removals)
+    for emote in body.get("updated", []):
+        if emote.get("key") == "emotes" and emote.get("value") is None:
+            old = emote.get("old_value", {})
+            emote_id = old.get("id")
+            emote_name = old.get("name")
+            if emote_id and emote_name:
+                emote_events.append({
+                    "action": "REMOVE",
+                    "name": emote_name,
+                    "id": emote_id,
+                    "url": f"https://cdn.7tv.app/emote/{emote_id}/4x.webp",
+                    "actor": actor,
+                    "color": discord.Color.red(),
+                })
+                print(f"[7TV] REMOVE (updated/None) {emote_name} ({emote_id}) in {channel_name} by {actor}")
+
+    # Handle removed emotes (rare)
+    for emote in body.get("removed", []):
+        old = emote.get("old_value", {})
+        emote_id = old.get("id")
+        emote_name = old.get("name")
+        if emote_id and emote_name:
+            emote_events.append({
+                "action": "REMOVE",
+                "name": emote_name,
+                "id": emote_id,
+                "url": f"https://cdn.7tv.app/emote/{emote_id}/4x.webp",
+                "actor": actor,
+                "color": discord.Color.red(),
+            })
+            print(f"[7TV] REMOVE (removed) {emote_name} ({emote_id}) in {channel_name} by {actor}")
 
     # Handle renamed emotes (7TV sends as updated with key "emotes")
     for emote in body.get("updated", []):
@@ -184,6 +217,7 @@ async def handle_dispatch(bot, d):
                 print(f"[DISCORD] Failed to send embed: {e}")
         else:
             print(f"[DISCORD] Channel {CHANNEL_ID} not found.")
+
 
 # --- Discord commands ---
 @bot.command()

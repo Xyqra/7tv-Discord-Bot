@@ -151,32 +151,33 @@ async def handle_dispatch(bot, d):
             })
             print(f"[7TV] RENAME {old} → {new} ({emote_id}) in {channel_name} by {actor}")
 
-    # Send to Discord
-for event in emote_events:
-    embed = discord.Embed(
-        title=f"7TV UPDATE - {event['action']} - {channel_name} - {event['name']}",
-        url=f"https://7tv.app/emotes/{event['id']}",
-        description=(
-            f"Emotename: {event['name']}\n"
-            f"ID: {event['id']}\n"
-            f"Editor: {event['actor']}"
-        ),
-        colour=event["color"],
-        timestamp=datetime.now(),
-    )
-    embed.set_thumbnail(url=event["url"])
-    embed.set_footer(
-        text="7TV UPDATE",
-        icon_url="https://xyqra.com/assets/7tv.webp",
-    )
-    channel = bot.get_channel(CHANNEL_ID)
-    if channel:
-        try:
-            await channel.send(embed=embed)
-        except Exception as e:
-            print(f"[DISCORD] Failed to send embed: {e}")
-    else:
-        print(f"[DISCORD] Channel {CHANNEL_ID} not found.")
+    # --- THIS BLOCK MUST BE INDENTED INSIDE THE FUNCTION ---
+    for event in emote_events:
+        embed = discord.Embed(
+            title=f"7TV UPDATE - {event['action']} - {channel_name} - {event['name']}",
+            url=f"https://7tv.app/emotes/{event['id']}",
+            description=(
+                f"Emotename: {event['name']}\n"
+                f"ID: {event['id']}\n"
+                f"Editor: {event['actor']}"
+            ),
+            colour=event["color"],
+            timestamp=datetime.now(),
+        )
+        embed.set_thumbnail(url=event["url"])
+        embed.set_footer(
+            text="7TV UPDATE",
+            icon_url="https://xyqra.com/assets/7tv.webp",
+        )
+        channel = bot.get_channel(CHANNEL_ID)
+        if channel:
+            try:
+                await channel.send(embed=embed)
+            except Exception as e:
+                print(f"[DISCORD] Failed to send embed: {e}")
+        else:
+            print(f"[DISCORD] Channel {CHANNEL_ID} not found.")
+
 
 
 # --- Discord commands ---

@@ -158,7 +158,7 @@ async def handle_dispatch(bot, d):
             title=f"7TV UPDATE - {event['action']} - {channel_name} - {event['name']}",
             url=f"https://7tv.app/emotes/{event['id']}",
             description=(
-                f"Emotename: {event['name']}\n"
+                f"Emote: {event['name']}\n"
                 f"ID: {event['id']}\n"
                 f"Editor: {event['actor']}"
             ),

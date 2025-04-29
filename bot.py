@@ -94,7 +94,6 @@ async def handle_dispatch(bot, d):
     body = d["body"]
     actor = body.get("actor", {}).get("display_name", "Unknown")
     emote_set_id = body.get("id")
-    # Find channel name from config
     channel_name = next(
         (ch["twitch_login"] for ch in config["channels"] if ch["emote_set_id"] == emote_set_id),
         "Unknown"
@@ -135,23 +134,25 @@ async def handle_dispatch(bot, d):
                 })
                 print(f"[7TV] REMOVE {emote_name} ({emote_id}) in {channel_name} by {actor}")
 
-    # Handle renamed emotes
+    # Handle renamed emotes (7TV sends as updated with key "emotes")
     for emote in body.get("updated", []):
-        if emote.get("key") == "name":
-            old = emote.get("old_value")
-            new = emote.get("value")
-            emote_id = body["id"]
-            emote_events.append({
-                "action": "RENAME",
-                "name": f"{old} → {new}",
-                "id": emote_id,
-                "url": f"https://cdn.7tv.app/emote/{emote_id}/4x.webp",
-                "actor": actor,
-                "color": discord.Color.orange(),
-            })
-            print(f"[7TV] RENAME {old} → {new} ({emote_id}) in {channel_name} by {actor}")
+        if emote.get("key") == "emotes":
+            old = emote.get("old_value", {})
+            new = emote.get("value", {})
+            old_name = old.get("name")
+            new_name = new.get("name")
+            emote_id = old.get("id") or new.get("id") or body["id"]
+            if old_name and new_name and old_name != new_name:
+                emote_events.append({
+                    "action": "RENAME",
+                    "name": f"{old_name} → {new_name}",
+                    "id": emote_id,
+                    "url": f"https://cdn.7tv.app/emote/{emote_id}/4x.webp",
+                    "actor": actor,
+                    "color": discord.Color.orange(),
+                })
+                print(f"[7TV] RENAME {old_name} → {new_name} ({emote_id}) in {channel_name} by {actor}")
 
-    # --- THIS BLOCK MUST BE INDENTED INSIDE THE FUNCTION ---
     for event in emote_events:
         embed = discord.Embed(
             title=f"7TV UPDATE - {event['action']} - {channel_name} - {event['name']}",
@@ -183,9 +184,6 @@ async def handle_dispatch(bot, d):
                 print(f"[DISCORD] Failed to send embed: {e}")
         else:
             print(f"[DISCORD] Channel {CHANNEL_ID} not found.")
-
-
-
 
 # --- Discord commands ---
 @bot.command()

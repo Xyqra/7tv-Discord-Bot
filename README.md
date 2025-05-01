@@ -22,7 +22,7 @@ A simple Discord bot that listens for 7TV emote set changes (add, remove, rename
 
     ```
     DISCORD_TOKEN=your_discord_bot_token_here
-    DISCORD_CHHANNEL_ID=your_discord_channel_id_here
+    DISCORD_CHANNEL_ID=your_discord_channel_id_here
     ```
 
 3. **Run the bot:**

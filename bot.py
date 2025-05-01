@@ -8,10 +8,10 @@ import discord
 from dotenv import load_dotenv
 
 CONFIG_FILE = "config.json"
-CHANNEL_ID = 1353345306711818314  # Your Discord channel ID
 
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+DISCORD_CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID"))
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -57,7 +57,7 @@ async def eventapi_listener(bot):
     ws_url = "wss://events.7tv.io/v3"
     while True:
         try:
-            print("[WS] Connecting to 7TV EventAPI WebSocket...")
+            print("[WS] Connecting to 7TV EventAPI WebSocket PauseChamp...")
             async with session.ws_connect(ws_url) as ws:
                 print("[WS] Connected.")
                 # Wait for HELLO
@@ -78,7 +78,7 @@ async def eventapi_listener(bot):
                 async for msg in ws:
                     if msg.type == aiohttp.WSMsgType.TEXT:
                         data = json.loads(msg.data)
-                        print(f"[WS] Received message: {data}")
+                        # print(f"[WS] Received message: {data}")
                         if data.get("op") == 0:  # DISPATCH
                             await handle_dispatch(bot, data["d"])
                     elif msg.type == aiohttp.WSMsgType.ERROR:

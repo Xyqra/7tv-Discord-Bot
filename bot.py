@@ -50,90 +50,44 @@ async def get_7tv_emoteset_id(session, twitch_id):
         print(f"[API] 7TV emote set ID: {data['emote_set_id']}")
         return data["emote_set_id"]
 
-# --- 7TV EventAPI WebSocket Manager ---
-class EventAPIManager:
-    def __init__(self, bot):
-        self.bot = bot
-        self.session = None
-        self.ws = None
-        self.ws_url = "wss://events.7tv.io/v3"
-        self.session_id = None
-        self.subscribed_emote_sets = set()
-        self.lock = asyncio.Lock()
-        self.running = True
+# --- 7TV EventAPI WebSocket ---
+async def eventapi_listener(bot):
+    await bot.wait_until_ready()
+    session = aiohttp.ClientSession()
+    ws_url = "wss://events.7tv.io/v3"
+    while True:
+        try:
+            print("[WS] Connecting to 7TV EventAPI WebSocket PauseChamp...")
+            async with session.ws_connect(ws_url) as ws:
+                print("[WS] Connected.")
+                # Wait for HELLO
+                hello = await ws.receive_json()
+                session_id = hello["d"]["session_id"]
+                print(f"[WS] Session ID: {session_id}")
+                # Subscribe to all emote sets
+                for ch in config["channels"]:
+                    print(f"[WS] Subscribing to emote_set.update for {ch['twitch_login']} ({ch['emote_set_id']})")
+                    await ws.send_json({
+                        "op": 35,
+                        "d": {
+                            "type": "emote_set.update",
+                            "condition": {"object_id": ch["emote_set_id"]}
+                        }
+                    })
+                # Listen for events
+                async for msg in ws:
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        data = json.loads(msg.data)
+                        # print(f"[WS] Received message: {data}")
+                        if data.get("op") == 0:  # DISPATCH
+                            await handle_dispatch(bot, data["d"])
+                    elif msg.type == aiohttp.WSMsgType.ERROR:
+                        print(f"[WS] WebSocket error: {msg.data}")
+                        break
+        except Exception as e:
+            print(f"[WS] WebSocket error: {e}, reconnecting in 5s...")
+            await asyncio.sleep(5)
 
-    async def start(self):
-        await self.bot.wait_until_ready()
-        self.session = aiohttp.ClientSession()
-        while self.running:
-            try:
-                print("[WS] Connecting to 7TV EventAPI WebSocket...")
-                async with self.session.ws_connect(self.ws_url) as ws:
-                    self.ws = ws
-                    hello = await ws.receive_json()
-                    self.session_id = hello["d"]["session_id"]
-                    print(f"[WS] Session ID: {self.session_id}")
-                    # Subscribe to all emote sets in config
-                    async with self.lock:
-                        for ch in config["channels"]:
-                            await self.subscribe_emote_set(ch["emote_set_id"])
-                    # Listen for events
-                    async for msg in ws:
-                        if msg.type == aiohttp.WSMsgType.TEXT:
-                            data = json.loads(msg.data)
-                            if data.get("op") == 0:  # DISPATCH
-                                await handle_dispatch(self.bot, data["d"])
-                        elif msg.type == aiohttp.WSMsgType.ERROR:
-                            print(f"[WS] WebSocket error: {msg.data}")
-                            break
-            except Exception as e:
-                print(f"[WS] WebSocket error: {e}, reconnecting in 5s...")
-                await asyncio.sleep(5)
-
-    async def subscribe_emote_set(self, emote_set_id):
-        if self.ws is None or self.ws.closed:
-            print(f"[WS] Can't subscribe, WebSocket not connected.")
-            return
-        if emote_set_id in self.subscribed_emote_sets:
-            print(f"[WS] Already subscribed to {emote_set_id}")
-            return
-        print(f"[WS] Subscribing to emote_set.update for {emote_set_id}")
-        await self.ws.send_json({
-            "op": 35,
-            "d": {
-                "type": "emote_set.update",
-                "condition": {"object_id": emote_set_id}
-            }
-        })
-        self.subscribed_emote_sets.add(emote_set_id)
-
-    async def unsubscribe_emote_set(self, emote_set_id):
-        if self.ws is None or self.ws.closed:
-            print(f"[WS] Can't unsubscribe, WebSocket not connected.")
-            return
-        if emote_set_id not in self.subscribed_emote_sets:
-            print(f"[WS] Not subscribed to {emote_set_id}")
-            return
-        print(f"[WS] Unsubscribing from emote_set.update for {emote_set_id}")
-        await self.ws.send_json({
-            "op": 36,
-            "d": {
-                "type": "emote_set.update",
-                "condition": {"object_id": emote_set_id}
-            }
-        })
-        self.subscribed_emote_sets.remove(emote_set_id)
-
-    async def stop(self):
-        self.running = False
-        if self.ws:
-            await self.ws.close()
-        if self.session:
-            await self.session.close()
-
-eventapi_manager = EventAPIManager(bot)
-
-# --- 7TV Event Handler ---
 async def handle_dispatch(bot, d):
     if d.get("type") != "emote_set.update":
         return
@@ -255,14 +209,15 @@ async def handle_dispatch(bot, d):
             f"Emotename: {event['name']} | ID: {event['id']} | Editor: {event['actor']}"
         )
 
-        channel = bot.get_channel(DISCORD_CHANNEL_ID)
+        channel = bot.get_channel(CHANNEL_ID)
         if channel:
             try:
                 await channel.send(content=plain_text, embed=embed)
             except Exception as e:
                 print(f"[DISCORD] Failed to send embed: {e}")
         else:
-            print(f"[DISCORD] Channel {DISCORD_CHANNEL_ID} not found.")
+            print(f"[DISCORD] Channel {CHANNEL_ID} not found.")
+
 
 # --- Discord commands ---
 @bot.command()
@@ -290,21 +245,13 @@ async def add(ctx, twitch_login: str):
     })
     save_config(config)
     print(f"[CMD] Added channel {twitch_login} (emote set {emoteset_id}).")
-    await ctx.send(f"Added channel {twitch_login} (emote set {emoteset_id}).")
-    # --- Dynamically subscribe ---
-    async with eventapi_manager.lock:
-        await eventapi_manager.subscribe_emote_set(emoteset_id)
+    await ctx.send(f"Added channel {twitch_login} (emote set {emoteset_id}). Please restart the bot to subscribe.")
 
 @bot.command()
 async def remove(ctx, twitch_login: str):
     """Remove a channel by Twitch login name."""
     print(f"[CMD] !remove {twitch_login} by {ctx.author}")
     before = len(config["channels"])
-    removed_emoteset_id = None
-    for ch in config["channels"]:
-        if ch["twitch_login"] == twitch_login:
-            removed_emoteset_id = ch["emote_set_id"]
-            break
     config["channels"] = [
         ch for ch in config["channels"] if ch["twitch_login"] != twitch_login
     ]
@@ -315,11 +262,7 @@ async def remove(ctx, twitch_login: str):
         await ctx.send("Channel not found.")
     else:
         print(f"[CMD] Removed channel {twitch_login}.")
-        await ctx.send(f"Removed channel {twitch_login}.")
-        # --- Dynamically unsubscribe ---
-        if removed_emoteset_id:
-            async with eventapi_manager.lock:
-                await eventapi_manager.unsubscribe_emote_set(removed_emoteset_id)
+        await ctx.send(f"Removed channel {twitch_login}. Please restart the bot to unsubscribe.")
 
 @bot.command()
 async def list(ctx):
@@ -340,7 +283,7 @@ async def list(ctx):
 @bot.event
 async def on_ready():
     print(f"[DISCORD] Logged in as {bot.user}")
-    bot.loop.create_task(eventapi_manager.start())
+    bot.loop.create_task(eventapi_listener(bot))
 
 if __name__ == "__main__":
     print("[BOT] Starting 7TV Discord bot...")

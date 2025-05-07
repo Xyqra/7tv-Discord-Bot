@@ -17,7 +17,8 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# --- Persistence ---
+message_queue = asyncio.Queue()
+
 def load_config():
     if not os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "w") as f:
@@ -31,7 +32,6 @@ def save_config(config):
 
 config = load_config()
 
-# --- 7TV API helpers ---
 async def get_twitch_id(session, login):
     url = f"https://api.ivr.fi/v2/twitch/user?login={login}"
     print(f"[API] Fetching Twitch ID for login: {login}")
@@ -50,7 +50,6 @@ async def get_7tv_emoteset_id(session, twitch_id):
         print(f"[API] 7TV emote set ID: {data['emote_set_id']}")
         return data["emote_set_id"]
 
-# --- 7TV EventAPI WebSocket ---
 async def eventapi_listener(bot):
     await bot.wait_until_ready()
     session = aiohttp.ClientSession()
@@ -60,11 +59,9 @@ async def eventapi_listener(bot):
             print("[WS] Connecting to 7TV EventAPI WebSocket PauseChamp...")
             async with session.ws_connect(ws_url) as ws:
                 print("[WS] Connected.")
-                # Wait for HELLO
                 hello = await ws.receive_json()
                 session_id = hello["d"]["session_id"]
                 print(f"[WS] Session ID: {session_id}")
-                # Subscribe to all emote sets
                 for ch in config["channels"]:
                     print(f"[WS] Subscribing to emote_set.update for {ch['twitch_login']} ({ch['emote_set_id']})")
                     await ws.send_json({
@@ -74,12 +71,10 @@ async def eventapi_listener(bot):
                             "condition": {"object_id": ch["emote_set_id"]}
                         }
                     })
-                # Listen for events
                 async for msg in ws:
                     if msg.type == aiohttp.WSMsgType.TEXT:
                         data = json.loads(msg.data)
-                        # print(f"[WS] Received message: {data}")
-                        if data.get("op") == 0:  # DISPATCH
+                        if data.get("op") == 0:
                             await handle_dispatch(bot, data["d"])
                     elif msg.type == aiohttp.WSMsgType.ERROR:
                         print(f"[WS] WebSocket error: {msg.data}")
@@ -100,7 +95,6 @@ async def handle_dispatch(bot, d):
     )
     emote_events = []
 
-    # Handle pushed emotes (adds)
     for emote in body.get("pushed", []):
         if emote.get("key") == "emotes":
             value = emote.get("value", {})
@@ -117,7 +111,6 @@ async def handle_dispatch(bot, d):
                 })
                 print(f"[7TV] ADD {emote_name} ({emote_id}) in {channel_name} by {actor}")
 
-    # Handle pulled emotes (main way 7TV removes emotes)
     for emote in body.get("pulled", []):
         if emote.get("key") == "emotes":
             old = emote.get("old_value", {})
@@ -134,7 +127,6 @@ async def handle_dispatch(bot, d):
                 })
                 print(f"[7TV] REMOVE {emote_name} ({emote_id}) in {channel_name} by {actor}")
 
-    # Handle updated emotes with value None (sometimes used for removals)
     for emote in body.get("updated", []):
         if emote.get("key") == "emotes" and emote.get("value") is None:
             old = emote.get("old_value", {})
@@ -151,7 +143,6 @@ async def handle_dispatch(bot, d):
                 })
                 print(f"[7TV] REMOVE (updated/None) {emote_name} ({emote_id}) in {channel_name} by {actor}")
 
-    # Handle removed emotes (rare)
     for emote in body.get("removed", []):
         old = emote.get("old_value", {})
         emote_id = old.get("id")
@@ -166,8 +157,7 @@ async def handle_dispatch(bot, d):
                 "color": discord.Color.red(),
             })
             print(f"[7TV] REMOVE (removed) {emote_name} ({emote_id}) in {channel_name} by {actor}")
-
-    # Handle renamed emotes (7TV sends as updated with key "emotes")
+            
     for emote in body.get("updated", []):
         if emote.get("key") == "emotes":
             old = emote.get("old_value", {})
@@ -208,21 +198,36 @@ async def handle_dispatch(bot, d):
             f"[7TV] {event['action']} | Channel: {channel_name} | "
             f"Emotename: {event['name']} | ID: {event['id']} | Editor: {event['actor']}"
         )
+        await message_queue.put({"content": plain_text, "embed": embed})
 
-        channel = bot.get_channel(CHANNEL_ID)
-        if channel:
-            try:
-                await channel.send(content=plain_text, embed=embed)
-            except Exception as e:
-                print(f"[DISCORD] Failed to send embed: {e}")
-        else:
-            print(f"[DISCORD] Channel {CHANNEL_ID} not found.")
+async def send_messages_task(bot):
+    await bot.wait_until_ready()
+    channel = bot.get_channel(CHANNEL_ID)
+    if not channel:
+        print(f"[DISCORD] Channel {CHANNEL_ID} not found.")
+        return
 
+    while True:
+        msg = await message_queue.get()
+        try:
+            await channel.send(content=msg["content"], embed=msg["embed"])
+            await asyncio.sleep(1.1)  # 1.1s is safe for 5/5s per-channel limit
+        except discord.errors.HTTPException as e:
+            if e.status == 429:
+                # Rate limited, retry after the specified time
+                retry_after = getattr(e, "retry_after", 5)
+                print(f"[DISCORD] Rate limited! Retrying after {retry_after} seconds.")
+                await asyncio.sleep(retry_after)
+                await message_queue.put(msg)  # Put message back in queue
+            else:
+                print(f"[DISCORD] Failed to send message: {e}")
+        except Exception as e:
+            print(f"[DISCORD] Unexpected error: {e}")
+        finally:
+            message_queue.task_done()
 
-# --- Discord commands ---
 @bot.command()
 async def add(ctx, twitch_login: str):
-    """Add a channel by Twitch login name."""
     print(f"[CMD] !add {twitch_login} by {ctx.author}")
     async with aiohttp.ClientSession() as session:
         try:
@@ -249,7 +254,6 @@ async def add(ctx, twitch_login: str):
 
 @bot.command()
 async def remove(ctx, twitch_login: str):
-    """Remove a channel by Twitch login name."""
     print(f"[CMD] !remove {twitch_login} by {ctx.author}")
     before = len(config["channels"])
     config["channels"] = [
@@ -266,7 +270,6 @@ async def remove(ctx, twitch_login: str):
 
 @bot.command()
 async def list(ctx):
-    """List all tracked channels."""
     print(f"[CMD] !list by {ctx.author}")
     if not config["channels"]:
         await ctx.send("No channels tracked.")
@@ -279,11 +282,11 @@ async def list(ctx):
     await ctx.send(f"Tracked channels:\n{msg}")
     print(f"[CMD] Tracked channels:\n{msg}")
 
-# --- Startup ---
 @bot.event
 async def on_ready():
     print(f"[DISCORD] Logged in as {bot.user}")
     bot.loop.create_task(eventapi_listener(bot))
+    bot.loop.create_task(send_messages_task(bot))
 
 if __name__ == "__main__":
     print("[BOT] Starting 7TV Discord bot...")

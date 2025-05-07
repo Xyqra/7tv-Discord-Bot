@@ -228,7 +228,6 @@ async def send_messages_task(bot):
 
 @bot.command()
 async def add(ctx, twitch_login: str):
-"""Add a channel by Twitch login name."""
     print(f"[CMD] !add {twitch_login} by {ctx.author}")
     async with aiohttp.ClientSession() as session:
         try:
@@ -255,7 +254,6 @@ async def add(ctx, twitch_login: str):
 
 @bot.command()
 async def remove(ctx, twitch_login: str):
-"""Remove a channel by Twitch login name."""
     print(f"[CMD] !remove {twitch_login} by {ctx.author}")
     before = len(config["channels"])
     config["channels"] = [
@@ -272,7 +270,6 @@ async def remove(ctx, twitch_login: str):
 
 @bot.command()
 async def list(ctx):
-    """List all tracked channels."""
     print(f"[CMD] !list by {ctx.author}")
     if not config["channels"]:
         await ctx.send("No channels tracked.")
